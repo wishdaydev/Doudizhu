@@ -617,12 +617,15 @@ internal object MasterSearch {
             val key = stateKey(turnIn, last, lastPlayer)
             val hit = tt[key]
             if (hit != null && hit.depth >= depth) {
+                // 终局分含 ply（WIN - ply / -WIN + ply），而置换表键不含 ply；
+                // 读取时按当前 ply 还原，避免不同路径长度复用同一条目造成分数污染
+                val hv = fromTT(hit.value, ply)
                 when (hit.flag) {
-                    FLAG_EXACT -> return hit.value
-                    FLAG_LOWER -> if (hit.value > alpha) alpha = hit.value
-                    else -> if (hit.value < beta) beta = hit.value
+                    FLAG_EXACT -> return hv
+                    FLAG_LOWER -> if (hv > alpha) alpha = hv
+                    else -> if (hv < beta) beta = hv
                 }
-                if (alpha >= beta) return hit.value
+                if (alpha >= beta) return hv
             }
 
             val hand = hands[turnIn]
@@ -676,7 +679,8 @@ internal object MasterSearch {
                     best >= betaIn -> FLAG_LOWER
                     else -> FLAG_EXACT
                 }
-                tt[key] = TTEntry(best, depth, flag)
+                // 终局分含 ply，存储时折算成与 ply 无关的形式（见 fromTT）
+                tt[key] = TTEntry(toTT(best, ply), depth, flag)
             }
             return best
         }
@@ -713,13 +717,16 @@ internal object MasterSearch {
                 // 修复点⑤：人类策略分支是确定性单一走法，必须【先于】全量 min 枚举计算，
                 // 否则当 min 枚举触发 fail-low 剪枝提前 break 时，optBest 只是「≤真实min」的上界，
                 // 再与确定性的 hv 做期望混合会系统性低估局面、污染地主决策（典型症状：无谓抢权甩大牌）。
+                // hv 用全开窗口（-INF, INF）求【精确值】：它要在下方 min 循环里当作该走法的真实值
+                // 被复用（packed 相等即跳过重复展开），若带窗口 fail-low 得到上界，会把上界当精确值
+                // 参与 min 比较，同样造成系统性高估该节点、污染地主估值。
                 val hm = humanPolicy(hands[turnIn], effLast, effLastPlayer, turnIn)
                 val hv = if (hm == null) {
                     // 人类农民（敌方节点）压不上只能过：敌方过牌不施加惩罚
-                    search(next, effLast, effLastPlayer, depth - 1, alpha, beta, ply + 1)
+                    search(next, effLast, effLastPlayer, depth - 1, -INF, INF, ply + 1)
                 } else {
                     apply(turnIn, hm)
-                    val v = search(next, hm, turnIn, depth - 1, alpha, beta, ply + 1)
+                    val v = search(next, hm, turnIn, depth - 1, -INF, INF, ply + 1)
                     undo(turnIn, hm)
                     v
                 }
@@ -744,36 +751,36 @@ internal object MasterSearch {
                 }
                 return best
             }
-            // —— pModel > 0：expectimax 混合。确定性人类分支必须先精确算出，min 分支允许剪枝 ——
+            // —— pModel > 0：expectimax 混合。两个分支都必须是【精确值】才能混合 ——
+            // 旧实现有两处把「界」当「值」用：
+            //  ① hv 带 (alpha, beta) 窗口计算，fail-low 时只是上界，却被当作确定性人类走法的真实值；
+            //  ② min 分支带 (a0, b0) 窗口且允许 fail-low 提前 break，optBest 只是「≤真实min」的上界，
+            //     与 hv 加权混合会系统性低估局面（修复点⑤只修了 pModel==0 分支的同类问题）。
+            // 因此这里两个分支都用全开窗口（-INF, INF）求精确值。人类节点仅存在于地主根，
+            // 数量有限，放弃此处剪枝换来的精确性是值得的。
             val hm = humanPolicy(hands[turnIn], effLast, effLastPlayer, turnIn)
             val hv = if (hm == null) {
                 // 人类农民（敌方节点）压不上只能过：敌方过牌不施加惩罚
-                search(next, effLast, effLastPlayer, depth - 1, alpha, beta, ply + 1)
+                search(next, effLast, effLastPlayer, depth - 1, -INF, INF, ply + 1)
             } else {
                 apply(turnIn, hm)
-                val v = search(next, hm, turnIn, depth - 1, alpha, beta, ply + 1)
+                val v = search(next, hm, turnIn, depth - 1, -INF, INF, ply + 1)
                 undo(turnIn, hm)
                 v
             }
             if (aborted) return 0
             // 最优分支：人类农民尽力压低地主胜率（min）。对确定性走法直接复用 hv，不再重复展开。
             var optBest = INF
-            val a0 = alpha
-            var b0 = beta
             for (a in moves) {
                 if (hm != null && a.packed == hm.packed) {
                     if (hv < optBest) optBest = hv
-                    if (optBest < b0) b0 = optBest
-                    if (a0 >= b0) break
                     continue
                 }
                 apply(turnIn, a)
-                val v = search(next, a, turnIn, depth - 1, a0, b0, ply + 1)
+                val v = search(next, a, turnIn, depth - 1, -INF, INF, ply + 1)
                 undo(turnIn, a)
                 if (aborted) return 0
                 if (v < optBest) optBest = v
-                if (optBest < b0) b0 = optBest
-                if (a0 >= b0) break
             }
             // 期望混合（整数权重，避免浮点）
             return (hv * pModel + optBest * (1000 - pModel)) / 1000
@@ -1074,6 +1081,24 @@ internal object MasterSearch {
             if (cnt(hand, 16) > 0 && cnt(hand, 17) > 0) s += 5
             for (r in 3..15) if (cnt(hand, r) == 4) s += 8
             return s
+        }
+
+        /**
+         * 终局胜负分带层数（WIN - ply / -WIN + ply），而置换表键（[stateKey]）不含 ply。
+         * 存储时把分折算成「相对本节点的胜负距离」（与 ply 无关），读取时再按当前 ply 还原，
+         * 避免不同路径长度复用同一条目时把别处的 ply 带进来污染估值。
+         * 以 WIN/2 为阈值区分终局分与静态评估分（评估分量级远小于 WIN/2）。
+         */
+        private fun toTT(v: Int, ply: Int): Int = when {
+            v > WIN / 2 -> v + ply
+            v < -WIN / 2 -> v - ply
+            else -> v
+        }
+
+        private fun fromTT(v: Int, ply: Int): Int = when {
+            v > WIN / 2 -> v - ply
+            v < -WIN / 2 -> v + ply
+            else -> v
         }
 
         private fun stateKey(turn: Int, last: Move?, lastPlayer: Int): Long {
