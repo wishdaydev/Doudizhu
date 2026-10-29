@@ -20,7 +20,7 @@ import kotlin.random.Random
  * 全部权重共享同一组发牌种子与座位轮换（配对采样），降低横向对比的方差。
  *
  * 用法（见 sim/run-sim.sh）：
- *   java -jar sim.jar [games] [deadlineMs] [nodeLimit] [threads] [w0,w1,...] [baseSeed]
+ *   java -jar sim.jar [games] [deadlineMs] [nodeLimit] [threads] [w0,w1,...] [baseSeed] [panicBombLdSize]
  */
 object SimMain {
 
@@ -42,7 +42,8 @@ object SimMain {
         humanFarmer: Int,
         modelWeight: Int,
         deadlineMs: Long,
-        nodeLimit: Int
+        nodeLimit: Int,
+        panicBombLdSize: Int
     ): Boolean {
         val hands = deal(seed, landlord)
         val sizes = IntArray(3) { MasterSearch.sizeOf(hands[it]) }
@@ -63,7 +64,7 @@ object SimMain {
                     deadlineMs = deadlineMs, nodeLimit = nodeLimit
                 )
                 turn == humanFarmer -> MasterSearch.humanPolicy(
-                    hands[turn], last, lastPlayer, turn, landlord, sizes[landlord]
+                    hands[turn], last, lastPlayer, turn, landlord, sizes[landlord], panicBombLdSize
                 )
                 else -> masterMove(
                     hands, sizes, turn, last, lastPlayer,
@@ -151,8 +152,9 @@ object SimMain {
         val weights = (args.getOrNull(4) ?: "0,400,600,800,1000")
             .split(",").mapNotNull { it.trim().toIntOrNull() }
         val baseSeed = args.getOrNull(5)?.toLongOrNull() ?: 20261029L
+        val panicBombLdSize = args.getOrNull(6)?.toIntOrNull() ?: 2
 
-        println("仿真配置：games=$games/权重, deadline=${deadlineMs}ms, nodeLimit=$nodeLimit, threads=$threads")
+        println("仿真配置：games=$games/权重, deadline=${deadlineMs}ms, nodeLimit=$nodeLimit, threads=$threads, panicBombLdSize=$panicBombLdSize")
         println("权重扫描：$weights（同一组种子/座位配对采样）")
         println("局型：AI地主(大师+建模) vs 人类农民(humanPolicy) + AI农民(大师)")
         println()
@@ -173,7 +175,8 @@ object SimMain {
                         humanFarmer = humanFarmer,
                         modelWeight = w,
                         deadlineMs = deadlineMs,
-                        nodeLimit = nodeLimit
+                        nodeLimit = nodeLimit,
+                        panicBombLdSize = panicBombLdSize
                     )
                     if (landlordWin) wins.incrementAndGet()
                     val d = done.incrementAndGet()

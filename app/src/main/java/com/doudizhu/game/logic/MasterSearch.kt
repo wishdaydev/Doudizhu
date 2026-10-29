@@ -402,8 +402,12 @@ internal object MasterSearch {
     /** 门板位顶大牌的触发阈值：地主手牌数不超过该值时，地主上家的人类农民改用小牌放行→大牌封堵 */
     private const val HUMAN_DOOR_PRESS_MAX_LD_SIZE = 10
 
-    /** 残局恐慌开炸的触发阈值：地主手牌数不超过该值且非炸弹压不住时，人类农民直接用最小炸弹拦截 */
-    private const val HUMAN_PANIC_BOMB_LD_SIZE = 2
+    /**
+     * 残局恐慌开炸的默认触发阈值（地主手牌数），仿真可通过 [humanPolicy] 参数覆盖以做对比实验。
+     * 取值 5：仿真显示阈值 2/5 对人类强度几乎无差（地主胜率 31.9%/32.2%），
+     * 而真人农民见地主 ≤5 张（一手顺子/三带即走完）普遍提前开炸，取更贴近真人的 5。
+     */
+    private const val HUMAN_PANIC_BOMB_LD_SIZE = 5
 
     /**
      * 近似「典型人类农民」的确定性出牌策略，仅供地主搜索做对手建模使用
@@ -423,7 +427,8 @@ internal object MasterSearch {
         lastPlayer: Int,
         turn: Int,
         landlord: Int,
-        landlordSize: Int
+        landlordSize: Int,
+        panicBombLdSize: Int = HUMAN_PANIC_BOMB_LD_SIZE
     ): Move? {
         val free = last == null || lastPlayer == turn || lastPlayer < 0 || lastPlayer > 2
         val effLast = if (free) null else last
@@ -444,8 +449,8 @@ internal object MasterSearch {
         }
         val beats = moves.filter { !it.isBomb }.sortedBy { it.mainRank }
         if (beats.isEmpty()) {
-            // 残局恐慌开炸：地主报单/报对且非炸弹压不住时，真人多半直接甩最小炸弹拦截
-            if (landlordSize <= HUMAN_PANIC_BOMB_LD_SIZE) {
+            // 残局恐慌开炸：地主逼近一手走完且非炸弹压不住时，真人多半直接甩最小炸弹拦截
+            if (landlordSize <= panicBombLdSize) {
                 val bombs = moves.filter { it.isBomb }
                 if (bombs.isNotEmpty()) return minByRank(bombs)
             }
