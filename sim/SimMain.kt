@@ -21,6 +21,8 @@ import kotlin.random.Random
  *
  * 用法（见 sim/run-sim.sh）：
  *   java -jar sim.jar [games] [deadlineMs] [nodeLimit] [threads] [w0,w1,...] [baseSeed] [panicBombLdSize]
+ *   deadlineMs=0 进入确定性模式：纯 nodeLimit 收口、不读墙钟，同参数同种子结果完全可复现
+ *   （此时建议把 nodeLimit 降到 30000~60000 控制耗时）。
  */
 object SimMain {
 
@@ -116,11 +118,13 @@ object SimMain {
         }
         val passPenalty = if (rootIsLandlord) oppP else HUMAN_TEAMMATE_PASS_PENALTY
 
+        // deadlineMs <= 0：确定性模式（纯节点数收口、不读墙钟），同参数同种子必出同一结果，供调参复现
+        val deadline = if (deadlineMs <= 0) Long.MAX_VALUE else System.currentTimeMillis() + deadlineMs
         val solver = MasterSearch.Solver(
             initialHands = hands.copyOf(),
             landlord = landlord,
             rootIsLandlord = rootIsLandlord,
-            deadlineMs = System.currentTimeMillis() + deadlineMs,
+            deadlineMs = deadline,
             nodeLimit = nodeLimit,
             passPenalty = passPenalty,
             humanFarmer = if (useModeling) humanFarmer else -1,

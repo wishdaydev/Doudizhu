@@ -632,7 +632,8 @@ internal object MasterSearch {
                 aborted = true
                 return 0
             }
-            if ((nodes and 0x1FF) == 0 && System.currentTimeMillis() >= deadlineMs) {
+            // deadlineMs == Long.MAX_VALUE：确定性模式（纯节点数收口，不读墙钟），供仿真复现实验使用
+            if (deadlineMs != Long.MAX_VALUE && (nodes and 0x1FF) == 0 && System.currentTimeMillis() >= deadlineMs) {
                 aborted = true
                 return 0
             }
@@ -982,18 +983,27 @@ internal object MasterSearch {
             var t = 0
             if (c[16] > 0 && c[17] > 0) { t++; c[16] = 0; c[17] = 0 }
             for (r in 3..15) if (c[r] == 4) { t++; c[r] = 0 }
+            // 记录拆出的顺子/连对/飞机段，之后逐段判断「是否会被对手压住」，
+            // 补上基线只惩罚散单/对子尾巴、不区分「大顺子 vs 小顺子」的缺陷
+            val runs = ArrayList<Int>(4)
             if (triplesFirst) {
                 t += consumeTriples(c, 0)
-                t += consumeRuns(c, 0, 3, 2)
-                t += consumeRuns(c, 0, 2, 3)
-                t += consumeRuns(c, 0, 1, 5)
+                t += consumeRuns(c, 0, 3, 2, runs)
+                t += consumeRuns(c, 0, 2, 3, runs)
+                t += consumeRuns(c, 0, 1, 5, runs)
             } else {
-                t += consumeRuns(c, 0, 3, 2)
-                t += consumeRuns(c, 0, 2, 3)
-                t += consumeRuns(c, 0, 1, 5)
+                t += consumeRuns(c, 0, 3, 2, runs)
+                t += consumeRuns(c, 0, 2, 3, runs)
+                t += consumeRuns(c, 0, 1, 5, runs)
                 t += consumeTriples(c, 0)
             }
             var beat = 0
+            for (packed in runs) {
+                val m = packed ushr 16
+                val s = (packed ushr 8) and 0xFF
+                val len = packed and 0xFF
+                if (oppBeatsRun(m, s, len, enemyA, enemyB)) beat++
+            }
             for (r in 3..17) {
                 val n = c[r]
                 if (n <= 0) continue
@@ -1004,6 +1014,34 @@ internal object MasterSearch {
                 t += pairs + singles
             }
             return t + beat
+        }
+
+        /**
+         * 对手是否能压住一段顺子/连对/飞机（m=每点张数，s=起始点数，len=段长）。
+         * 压法：同型同长、最小点数更大（整体平移 1 位起），或对手握有炸弹/王炸。
+         * 注意顺子/连对/飞机必须出自【同一家】手牌 —— 地主的敌人是两家农民时，
+         * 必须分别在 enemyA、enemyB 各自手牌里检查，不能把两家牌拼起来算。
+         */
+        private fun oppBeatsRun(m: Int, s: Int, len: Int, a: Long, b: Long): Boolean {
+            var start = s + 1
+            while (start + len - 1 <= 14) {   // 2 和王不进顺子，最高到 A(14)
+                var okA = true
+                var okB = true
+                for (r in start until start + len) {
+                    if (cnt(a, r) < m) okA = false
+                    if (cnt(b, r) < m) okB = false
+                    if (!okA && !okB) break
+                }
+                if (okA || okB) return true
+                start++
+            }
+            return oppHasBomb(a) || oppHasBomb(b)
+        }
+
+        private fun oppHasBomb(h: Long): Boolean {
+            if (cnt(h, 16) > 0 && cnt(h, 17) > 0) return true
+            for (r in 3..15) if (cnt(h, r) == 4) return true
+            return false
         }
 
         private fun oppBeatsSingle(r: Int, a: Long, b: Long): Boolean {
@@ -1068,8 +1106,9 @@ internal object MasterSearch {
             return t
         }
 
-        /** 吃掉连续结构：[m]=每点数张数（3=飞机/2=连对/1=顺子），[minLen]=最短段长；[off]=scratch 基址 */
-        private fun consumeRuns(c: IntArray, off: Int, m: Int, minLen: Int): Int {
+        /** 吃掉连续结构：[m]=每点数张数（3=飞机/2=连对/1=顺子），[minLen]=最短段长；[off]=scratch 基址。
+         *  [rec] 非空时把拆出的每段记录为 (m shl 16) or (start shl 8) or len，供评估判断「可被对手压住」 */
+        private fun consumeRuns(c: IntArray, off: Int, m: Int, minLen: Int, rec: MutableList<Int>? = null): Int {
             var plays = 0
             var r = 3
             while (r <= 14) {
@@ -1081,6 +1120,7 @@ internal object MasterSearch {
                 while (e <= 14 && c[off + e] >= m) e++
                 if (e - r >= minLen) {
                     for (k in r until e) c[off + k] -= m
+                    rec?.add((m shl 16) or (r shl 8) or (e - r))
                     plays++
                 }
                 r = e
