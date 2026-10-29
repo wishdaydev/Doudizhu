@@ -402,6 +402,9 @@ internal object MasterSearch {
     /** 门板位顶大牌的触发阈值：地主手牌数不超过该值时，地主上家的人类农民改用小牌放行→大牌封堵 */
     private const val HUMAN_DOOR_PRESS_MAX_LD_SIZE = 10
 
+    /** 残局恐慌开炸的触发阈值：地主手牌数不超过该值且非炸弹压不住时，人类农民直接用最小炸弹拦截 */
+    private const val HUMAN_PANIC_BOMB_LD_SIZE = 2
+
     /**
      * 近似「典型人类农民」的确定性出牌策略，仅供地主搜索做对手建模使用
      * （[Solver.humanNodeValue] 调用，仿真也可用同一策略当「真实人类」），本身不参与任何真实决策、
@@ -409,8 +412,10 @@ internal object MasterSearch {
      *  - 自由出牌：优先领最小的单张（人类常先打小牌）；无单张再领最小对子，再其他非炸弹。
      *  - 跟队友的牌：不压队友 —— 除非能一手走完直接获胜，否则过牌让队友继续。
      *  - 跟地主的牌：出能压住的最小非炸弹走法；压不住则过牌（不轻易动炸弹）。
-     *    例外（门板意识）：自己是地主上家且地主手牌不多（≤[HUMAN_DOOR_PRESS_MAX_LD_SIZE]）时，
+     *    例外一（门板意识）：自己是地主上家且地主手牌不多（≤[HUMAN_DOOR_PRESS_MAX_LD_SIZE]）时，
      *    单张/对子改为「能压住的最大牌」，顶大牌封堵地主顺走小牌 —— 这是真人农民最典型的行为。
+     *    例外二（残局恐慌开炸）：地主手牌 ≤[HUMAN_PANIC_BOMB_LD_SIZE] 且非炸弹压不住时，
+     *    直接用最小炸弹拦截 —— 真人见地主报单/报对很少再放行。
      */
     fun humanPolicy(
         hand: Long,
@@ -438,7 +443,14 @@ internal object MasterSearch {
             return moves.firstOrNull { it.isExactFinish(sizeOf(hand)) }
         }
         val beats = moves.filter { !it.isBomb }.sortedBy { it.mainRank }
-        if (beats.isEmpty()) return null
+        if (beats.isEmpty()) {
+            // 残局恐慌开炸：地主报单/报对且非炸弹压不住时，真人多半直接甩最小炸弹拦截
+            if (landlordSize <= HUMAN_PANIC_BOMB_LD_SIZE) {
+                val bombs = moves.filter { it.isBomb }
+                if (bombs.isNotEmpty()) return minByRank(bombs)
+            }
+            return null
+        }
         // 门板位：地主上家且地主手牌不多时，单张/对子顶最大牌封堵，不让地主顺小牌
         val isDoor = (turn + 1) % 3 == landlord
         if (isDoor && landlordSize <= HUMAN_DOOR_PRESS_MAX_LD_SIZE) {
