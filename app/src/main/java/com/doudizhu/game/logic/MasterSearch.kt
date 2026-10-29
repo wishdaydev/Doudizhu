@@ -399,14 +399,27 @@ internal object MasterSearch {
 
     // ===================== 搜索 =====================
 
+    /** 门板位顶大牌的触发阈值：地主手牌数不超过该值时，地主上家的人类农民改用小牌放行→大牌封堵 */
+    private const val HUMAN_DOOR_PRESS_MAX_LD_SIZE = 10
+
     /**
      * 近似「典型人类农民」的确定性出牌策略，仅供地主搜索做对手建模使用
      * （[Solver.humanNodeValue] 调用，仿真也可用同一策略当「真实人类」），本身不参与任何真实决策、
      * 不影响农民方搜索与普通模式。特征：可预测、偏次优 ——
      *  - 自由出牌：优先领最小的单张（人类常先打小牌）；无单张再领最小对子，再其他非炸弹。
-     *  - 跟牌：出能压住的最小非炸弹走法；压不住则过牌（不轻易动炸弹）。
+     *  - 跟队友的牌：不压队友 —— 除非能一手走完直接获胜，否则过牌让队友继续。
+     *  - 跟地主的牌：出能压住的最小非炸弹走法；压不住则过牌（不轻易动炸弹）。
+     *    例外（门板意识）：自己是地主上家且地主手牌不多（≤[HUMAN_DOOR_PRESS_MAX_LD_SIZE]）时，
+     *    单张/对子改为「能压住的最大牌」，顶大牌封堵地主顺走小牌 —— 这是真人农民最典型的行为。
      */
-    fun humanPolicy(hand: Long, last: Move?, lastPlayer: Int, turn: Int): Move? {
+    fun humanPolicy(
+        hand: Long,
+        last: Move?,
+        lastPlayer: Int,
+        turn: Int,
+        landlord: Int,
+        landlordSize: Int
+    ): Move? {
         val free = last == null || lastPlayer == turn || lastPlayer < 0 || lastPlayer > 2
         val effLast = if (free) null else last
         val moves = generate(hand, effLast)
@@ -419,10 +432,22 @@ internal object MasterSearch {
             val pairs = pool.filter { it.type == CardType.PAIR }
             if (pairs.isNotEmpty()) return minByRank(pairs)
             return minByRank(pool)
-        } else {
-            val beats = moves.filter { !it.isBomb }.sortedBy { it.mainRank }
-            return if (beats.isNotEmpty()) beats.first() else null
         }
+        // 队友的牌不压：能一手走完才接手，否则过牌（队友走得越顺越不该拦）
+        if (lastPlayer != landlord) {
+            return moves.firstOrNull { it.isExactFinish(sizeOf(hand)) }
+        }
+        val beats = moves.filter { !it.isBomb }.sortedBy { it.mainRank }
+        if (beats.isEmpty()) return null
+        // 门板位：地主上家且地主手牌不多时，单张/对子顶最大牌封堵，不让地主顺小牌
+        val isDoor = (turn + 1) % 3 == landlord
+        if (isDoor && landlordSize <= HUMAN_DOOR_PRESS_MAX_LD_SIZE) {
+            val headType = effLast?.type
+            if (headType == CardType.SINGLE || headType == CardType.PAIR) {
+                return beats.last()
+            }
+        }
+        return beats.first()
     }
 
     private fun minByRank(list: List<Move>): Move {
@@ -720,7 +745,7 @@ internal object MasterSearch {
                 // hv 用全开窗口（-INF, INF）求【精确值】：它要在下方 min 循环里当作该走法的真实值
                 // 被复用（packed 相等即跳过重复展开），若带窗口 fail-low 得到上界，会把上界当精确值
                 // 参与 min 比较，同样造成系统性高估该节点、污染地主估值。
-                val hm = humanPolicy(hands[turnIn], effLast, effLastPlayer, turnIn)
+                val hm = humanPolicy(hands[turnIn], effLast, effLastPlayer, turnIn, landlord, sizes[landlord])
                 val hv = if (hm == null) {
                     // 人类农民（敌方节点）压不上只能过：敌方过牌不施加惩罚
                     search(next, effLast, effLastPlayer, depth - 1, -INF, INF, ply + 1)
@@ -758,7 +783,7 @@ internal object MasterSearch {
             //     与 hv 加权混合会系统性低估局面（修复点⑤只修了 pModel==0 分支的同类问题）。
             // 因此这里两个分支都用全开窗口（-INF, INF）求精确值。人类节点仅存在于地主根，
             // 数量有限，放弃此处剪枝换来的精确性是值得的。
-            val hm = humanPolicy(hands[turnIn], effLast, effLastPlayer, turnIn)
+            val hm = humanPolicy(hands[turnIn], effLast, effLastPlayer, turnIn, landlord, sizes[landlord])
             val hv = if (hm == null) {
                 // 人类农民（敌方节点）压不上只能过：敌方过牌不施加惩罚
                 search(next, effLast, effLastPlayer, depth - 1, -INF, INF, ply + 1)
