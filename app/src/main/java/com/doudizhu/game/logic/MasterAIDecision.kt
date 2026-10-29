@@ -148,9 +148,15 @@ object MasterAIDecision {
             if (result.move != null) moveToCardGroup(result.move, hand) else null
         } catch (e: Throwable) {
             // 任何异常（不应发生）都回退到启发式，保证不会抛到引擎层导致卡死
+            // 农民局且上一手是队友出的：兜底也不能压队友（能一手走完除外）
+            val lastFromTeammate = snapshot.role == PlayerRole.FARMER &&
+                snapshot.lastPlayerIndex >= 0 &&
+                snapshot.lastPlayerIndex != snapshot.myIndex &&
+                snapshot.lastPlayerIndex != snapshot.landlordIndex
             fallbackDecision(
                 snapshot.hands[snapshot.myIndex].orEmpty(),
-                snapshot.lastPlay
+                snapshot.lastPlay,
+                lastFromTeammate
             )
         }
     }
@@ -210,8 +216,14 @@ object MasterAIDecision {
     /**
      * 启发式兜底：搜索异常或折算失败时，用 [CardRuleEngine.findAllValidPlays] 找一手合法牌。
      * 自由出牌优先一手走完、否则领最小非炸弹；跟牌优先最小非炸弹压制、否则最小炸弹、否则过牌。
+     * @param lastFromTeammate 上一手是否队友所出（仅农民局可能为 true）：
+     *        队友的牌不压——除非能一手走完直接获胜，否则过牌，避免兜底路径内斗。
      */
-    private fun fallbackDecision(hand: List<Card>, lastPlay: CardGroup?): CardGroup? {
+    private fun fallbackDecision(
+        hand: List<Card>,
+        lastPlay: CardGroup?,
+        lastFromTeammate: Boolean = false
+    ): CardGroup? {
         val candidates = CardRuleEngine.findAllValidPlays(hand, lastPlay)
         if (candidates.isEmpty()) return null
         val nonBombs = candidates.filter { it.type != CardType.BOMB && it.type != CardType.ROCKET }
@@ -221,6 +233,9 @@ object MasterAIDecision {
             candidates.firstOrNull { it.size == hand.size }   // 能一手走完直接走
                 ?: nonBombs.minByOrNull { it.mainRank }
                 ?: candidates.minByOrNull { it.mainRank }
+        } else if (lastFromTeammate) {
+            // 队友的牌：只在一手制胜时接手，否则过牌让队友继续
+            candidates.firstOrNull { it.size == hand.size }
         } else {
             // 跟牌：非炸弹优先，保留炸弹
             nonBombs.minByOrNull { it.mainRank }
