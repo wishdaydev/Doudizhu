@@ -484,7 +484,8 @@ internal object MasterSearch {
      * @param initialHands 三家位压缩手牌（下标即玩家 index）
      * @param landlord 地主索引
      * @param rootIsLandlord 根玩家是否为地主（决定评价视角属于哪一阵营）
-     * @param deadlineMs 绝对截止时刻（毫秒），到点立刻中止并回退到上一轮迭代结果
+     * @param deadlineMs 绝对截止时刻（毫秒），到点立刻中止并回退到上一轮迭代结果；
+     *        传 [Long.MAX_VALUE] 进入确定性模式（纯 nodeLimit 收口、不读墙钟），供仿真复现实验使用
      * @param nodeLimit 节点上限，防止极端局面耗尽预算
      * @param passPenalty 过牌惩罚。队友是人类时给一点点惩罚：搜索假设所有人都最优，
      *        但人类队友未必会按最优接管，因此在「打与不打等价」时倾向自己接管。

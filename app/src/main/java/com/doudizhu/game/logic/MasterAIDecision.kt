@@ -31,10 +31,13 @@ import com.doudizhu.game.model.PlayerRole
  *  - 仓库自带 JVM 仿真 harness：sim/SimMain.kt，局型为「AI地主(大师+人类建模) vs
  *    人类农民(humanPolicy 走子) + AI农民(大师)」，确定性发牌 + 配对种子，可直接对比
  *    不同 [LANDLORD_HUMAN_MODEL_WEIGHT] 下的地主胜率。
- *  - 用法：`./sim/run-sim.sh [games] [deadlineMs] [nodeLimit] [threads] [w0,w1,...] [baseSeed]`
+ *  - 用法：`./sim/run-sim.sh [games] [deadlineMs] [nodeLimit] [threads] [w0,w1,...] [baseSeed] [panicBombLdSize]`
  *    示例：`./sim/run-sim.sh 360 50 150000 3 0,200,400,600,800,1000`
  *  - 速度说明：单局耗时主要由 deadlineMs（每次决策的搜索预算）决定，而非 nodeLimit
  *    （中局通常打不到节点上限）；扫参时可用 20~30ms deadline 提速，再用 50ms 复核。
+ *  - 确定性模式：deadlineMs=0 时纯 nodeLimit 收口、不读墙钟（见 [MasterSearch.Solver]），
+ *    同参数同种子结果完全可复现，调参对比应优先用它（建议 nodeLimit 30000~60000），
+ *    例如 `./sim/run-sim.sh 360 0 40000 3 0,400,800`。
  */
 object MasterAIDecision {
 
