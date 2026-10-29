@@ -26,6 +26,15 @@ import com.doudizhu.game.model.PlayerRole
  *
  * 线程安全：本 object 无可变状态；[MasterSearch.Solver] 的所有可变状态都在其实例内，
  * 因此可在后台线程构造并求解（见 [GameEngine] 的 MASTER 分支），不触碰 [AIDecision] 的共享可变上下文。
+ *
+ * 仿真与调参（改动本文件或 [MasterSearch] 后应重跑）：
+ *  - 仓库自带 JVM 仿真 harness：sim/SimMain.kt，局型为「AI地主(大师+人类建模) vs
+ *    人类农民(humanPolicy 走子) + AI农民(大师)」，确定性发牌 + 配对种子，可直接对比
+ *    不同 [LANDLORD_HUMAN_MODEL_WEIGHT] 下的地主胜率。
+ *  - 用法：`./sim/run-sim.sh [games] [deadlineMs] [nodeLimit] [threads] [w0,w1,...] [baseSeed]`
+ *    示例：`./sim/run-sim.sh 360 50 150000 3 0,200,400,600,800,1000`
+ *  - 速度说明：单局耗时主要由 deadlineMs（每次决策的搜索预算）决定，而非 nodeLimit
+ *    （中局通常打不到节点上限）；扫参时可用 20~30ms deadline 提速，再用 50ms 复核。
  */
 object MasterAIDecision {
 
